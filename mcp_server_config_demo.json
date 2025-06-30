@@ -1,0 +1,16 @@
+{
+  "api_token": "your_api_token_here",
+  "api_base_url": "https://hfw-api.hifly.cc/api/v2/hifly",
+  "database_url": "sqlite+aiosqlite:///./hifly.db",
+  "db_echo": false,
+  "db_pool_size": 5,
+  "db_max_overflow": 10,
+  "db_pool_timeout": 30,
+  "db_pool_recycle": 1800,
+  "server_host": "127.0.0.1",
+  "server_port": 8000,
+  "server_path": "/mcp/",
+  "server_log_level": "info",
+  "task_check_interval": 60,
+  "task_max_retry": 3
+} 

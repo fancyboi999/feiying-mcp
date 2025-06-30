@@ -1,0 +1,10 @@
+fastmcp
+requests
+sqlalchemy>=2.0.0
+sqlalchemy[asyncio]
+aiosqlite
+alembic
+python-dotenv
+fastapi>=0.95.0
+uvicorn[standard]
+pydantic>=2.0.0
