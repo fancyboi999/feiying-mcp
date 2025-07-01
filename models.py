@@ -37,7 +37,7 @@ class Avatar(Base):
     __tablename__ = "avatars"
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    avatar_id = Column(String(50), unique=True, index=True, nullable=False, comment="飞影API返回的数字人ID")
+    avatar_id = Column(String(50), unique=True, index=True, nullable=True, comment="飞影API返回的数字人ID")
     title = Column(String(100), comment="数字人名称")
     kind = Column(Integer, default=1, comment="数字人类型，1:自己克隆的, 2:公共数字人")
     task_id = Column(String(50), ForeignKey("tasks.task_id"), nullable=True, comment="关联的任务ID")
@@ -57,7 +57,7 @@ class Voice(Base):
     __tablename__ = "voices"
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    voice_id = Column(String(50), unique=True, index=True, nullable=False, comment="飞影API返回的声音ID")
+    voice_id = Column(String(50), unique=True, index=True, nullable=True, comment="飞影API返回的声音ID")
     title = Column(String(100), comment="声音名称")
     voice_type = Column(Integer, comment="声音类型，8:基础版声音V2, 10:公版声音, 20:高保真声音")
     rate = Column(String(10), default="1.0", comment="语速")
@@ -107,7 +107,6 @@ class Audio(Base):
     __tablename__ = "audios"
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    audio_id = Column(String(50), unique=True, index=True, nullable=False, comment="飞影API返回的音频ID")
     title = Column(String(100), comment="作品名称")
     voice_id = Column(String(50), ForeignKey("voices.voice_id"), comment="使用的声音ID")
     task_id = Column(String(50), ForeignKey("tasks.task_id"), comment="关联的任务ID")

@@ -4,8 +4,9 @@
 
 import logging
 import datetime
-from typing import Dict, Any, Optional, List
+from typing import Annotated, Dict, Any, Optional, List
 from fastmcp.tools import Tool
+from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update
@@ -18,30 +19,15 @@ from models import Task, Audio, Voice
 # 配置日志
 logger = logging.getLogger(__name__)
 
+# 创建全局客户端实例
+client = HiFlyClient()
+
 async def create_audio_by_tts_tool(
-    text: str,
-    voice: str,
-    title: Optional[str] = None,
-    rate: Optional[str] = "1.0",
-    volume: Optional[str] = "1.0",
-    pitch: Optional[str] = "1.0",
-    user_id: Optional[str] = None,
+    text: Annotated[str, Field(description="文本内容，不超过1000个字")],
+    voice: Annotated[str, Field(description="声音ID，可以是公共声音ID或自己克隆的声音ID")],
+    title: Annotated[Optional[str], Field(description="音频标题，如不提供则使用文本前10个字符作为标题")] = None,
+    user_id: Annotated[Optional[str], Field(description="用户ID，用于关联音频所有者，如不提供则使用默认用户")] = None,
 ) -> Dict[str, Any]:
-    """
-    通过文本创建音频（文本转语音）。
-    
-    Args:
-        text: 文本内容，不超过1000个字
-        voice: 声音ID，可以是公共声音ID或自己克隆的声音ID
-        title: 音频标题，如不提供则使用文本前10个字符作为标题
-        rate: 语速，值为0.5和2.0之间，默认1.0
-        volume: 音量，值为0.1和2.0之间，默认1.0
-        pitch: 语调，值为0.1和2.0之间，默认1.0
-        user_id: 用户ID，用于关联音频所有者，如不提供则使用默认用户
-        
-    Returns:
-        包含任务ID和状态的信息
-    """
     # 参数验证
     if not text:
         raise ValueError("文本内容不能为空")
@@ -51,28 +37,7 @@ async def create_audio_by_tts_tool(
     
     if not voice:
         raise ValueError("声音ID不能为空")
-    
-    # 验证语速、音量和语调
-    try:
-        rate_float = float(rate)
-        if not (0.5 <= rate_float <= 2.0):
-            raise ValueError("语速必须在0.5和2.0之间")
-    except ValueError:
-        raise ValueError("语速必须是有效的数字")
         
-    try:
-        volume_float = float(volume)
-        if not (0.1 <= volume_float <= 2.0):
-            raise ValueError("音量必须在0.1和2.0之间")
-    except ValueError:
-        raise ValueError("音量必须是有效的数字")
-        
-    try:
-        pitch_float = float(pitch)
-        if not (0.1 <= pitch_float <= 2.0):
-            raise ValueError("语调必须在0.1和2.0之间")
-    except ValueError:
-        raise ValueError("语调必须是有效的数字")
     
     # 如果未提供标题，使用文本前10个字符作为标题
     if not title:
@@ -80,15 +45,13 @@ async def create_audio_by_tts_tool(
     
     # 获取数据库会话
     async for db in get_db():
-        client = None
         try:
-            # 初始化API客户端
-            client = HiFlyClient()
+            # 使用全局客户端实例
             
             # 调用API创建音频
             response = await client.create_audio_by_tts(
-                text=text,
                 voice=voice,
+                text=text,
                 title=title
             )
             
@@ -109,8 +72,18 @@ async def create_audio_by_tts_tool(
                 user_id=user_id or "default",
             )
             
+            # 创建音频记录
+            audio = Audio(
+                title=title,
+                task_id=task_id,
+                voice_id=voice,
+                text=text,
+                user_id=user_id or "default",
+            )
+            
             # 保存到数据库
             db.add(task)
+            db.add(audio)
             await db.commit()
             
             return {
@@ -123,26 +96,12 @@ async def create_audio_by_tts_tool(
             await db.rollback()
             logger.error(f"创建音频失败: {str(e)}")
             raise ValueError(f"创建音频失败: {str(e)}")
-        finally:
-            # 确保API客户端被关闭
-            if client:
-                await client.close()
 
 async def query_audio_task_tool(
-    task_id: str,
+    task_id: Annotated[str, Field(description="任务ID")],
 ) -> Dict[str, Any]:
-    """
-    查询音频创作任务状态。
-    
-    Args:
-        task_id: 任务ID
-        
-    Returns:
-        包含任务状态和音频信息的结果
-    """
     # 获取数据库会话
     async for db in get_db():
-        client = None
         try:
             # 从数据库查询任务，预加载audios关系
             result = await db.execute(
@@ -160,11 +119,10 @@ async def query_audio_task_tool(
                     return {
                         "task_id": task_id,
                         "status": "completed",
-                        "audio_id": audio.audio_id,
                         "title": audio.title,
-                        "url": audio.audio_url,
+                        "audio_url": audio.audio_url,
                         "duration": audio.duration,
-                        "text": audio.text
+                        "voice_id": audio.voice_id
                     }
                 elif task.status == 4:
                     return {
@@ -175,12 +133,10 @@ async def query_audio_task_tool(
                     }
             
             # 如果任务还在进行中，调用API查询最新状态
-            client = HiFlyClient()
             response = await client.get_video_task(task_id)
             
             # 获取状态
             status = response.get("status")
-            audio_id = response.get("audio_id")
             audio_url = response.get("video_Url")
             duration = response.get("duration", 0)
             
@@ -196,32 +152,17 @@ async def query_audio_task_tool(
                 )
             )
             
-            # 如果任务完成，创建音频记录
-            if status == 3 and audio_id:  # 3表示完成
-                # 检查音频是否已存在
-                result = await db.execute(select(Audio).where(Audio.audio_id == audio_id))
-                existing_audio = result.scalars().first()
+            # 如果任务完成，更新音频记录
+            if status == 3 and audio_url:  # 3表示完成
+                # 查询音频记录
+                result = await db.execute(select(Audio).where(Audio.task_id == task_id))
+                audio = result.scalars().first()
                 
-                if not existing_audio:
-                    # 创建音频记录
-                    audio = Audio(
-                        audio_id=audio_id,
-                        title=task.title,
-                        task_id=task_id,
-                        audio_url=audio_url,
-                        duration=duration,
-                        text=response.get("text", ""),
-                        user_id=task.user_id
-                    )
+                if audio:
+                    # 更新音频记录
+                    audio.audio_url = audio_url
+                    audio.duration = duration
                     db.add(audio)
-                    
-                    # 如果任务中有声音ID，关联声音记录
-                    voice_id = response.get("voice")
-                    if voice_id:
-                        result = await db.execute(select(Voice).where(Voice.voice_id == voice_id))
-                        voice = result.scalars().first()
-                        if voice:
-                            audio.voice_id = voice_id
             
             # 提交更改
             await db.commit()
@@ -233,12 +174,9 @@ async def query_audio_task_tool(
                 "status": status_map.get(status, "unknown")
             }
             
-            if status == 3 and audio_id:
-                result["audio_id"] = audio_id
-                result["title"] = task.title
-                result["url"] = audio_url
+            if status == 3 and audio_url:
+                result["audio_url"] = audio_url
                 result["duration"] = duration
-                result["text"] = response.get("text", "")
             elif status == 4:
                 result["message"] = response.get("message", "")
                 result["code"] = response.get("code", 0)
@@ -247,19 +185,15 @@ async def query_audio_task_tool(
             
         except Exception as e:
             await db.rollback()
-            logger.error(f"查询任务状态失败: {str(e)}")
-            raise ValueError(f"查询任务状态失败: {str(e)}")
-        finally:
-            # 确保API客户端被关闭
-            if client:
-                await client.close()
+            logger.error(f"查询音频任务状态失败: {str(e)}")
+            raise ValueError(f"查询音频任务状态失败: {str(e)}")
 
 # 创建FastMCP工具
 create_audio_by_tts = Tool.from_function(
     create_audio_by_tts_tool,
     name="create_audio_by_tts",
-    description="通过文本创建音频（文本转语音），支持指定声音ID、语速、音量和语调",
-    tags={"audio", "tts", "creation"}
+    description="通过文本创建音频（文本转语音），支持指定声音ID",
+    tags={"audio", "creation", "tts"}
 )
 
 query_audio_task = Tool.from_function(

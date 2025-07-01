@@ -2,10 +2,11 @@
 声音克隆相关的FastMCP工具，包括声音创建、修改和查询功能
 """
 
+from pydantic import Field
 import os
 import logging
 import asyncio
-from typing import Dict, Any, Optional, List, Union
+from typing import Annotated, Dict, Any, Optional, List, Union
 from fastmcp.tools import Tool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -14,32 +15,22 @@ import datetime
 from sqlalchemy.orm import selectinload
 
 from api_client import HiFlyClient
-from database import get_db, get_db_context
+from database import get_db
 from models import Task, Voice
 
 # 配置日志
 logger = logging.getLogger(__name__)
 
+# 创建全局客户端实例
+client = HiFlyClient()
+
 async def create_voice_tool(
-    title: str,
-    voice_type: int = 8,
-    audio_url: Optional[str] = None,
-    file_path: Optional[str] = None,
-    user_id: Optional[str] = None,
+    title: Annotated[str, Field(description="声音名称，不超过20个字")],
+    voice_type: Annotated[int, Field(description="声音类型，8:声音克隆基础版v2，目前只支持8")] = 8,
+    audio_url: Annotated[Optional[str], Field(description="声音文件URL，支持mp3、m4a、wav格式，20M以内，时长范围5秒～3分钟。与file_path二选一必填")] = None,
+    file_path: Annotated[Optional[str], Field(description="本地音频文件路径，与audio_url二选一必填，系统会自动上传该文件")] = None,
+    user_id: Annotated[Optional[str], Field(description="用户ID，用于关联声音所有者，如不提供则使用默认用户")] = "default",
 ) -> Dict[str, Any]:
-    """
-    创建克隆声音。
-    
-    Args:
-        title: 声音名称，不超过20个字
-        voice_type: 声音类型，8:声音克隆基础版v2，默认8
-        audio_url: 声音文件URL，支持mp3、m4a、wav格式，20M以内，时长范围5秒～3分钟。与file_path二选一必填
-        file_path: 本地音频文件路径，与audio_url二选一必填，系统会自动上传该文件
-        user_id: 用户ID，用于关联声音所有者，如不提供则使用默认用户
-        
-    Returns:
-        包含任务ID和状态的信息
-    """
     # 参数验证
     if not audio_url and not file_path:
         raise ValueError("audio_url和file_path必须提供一个")
@@ -48,10 +39,9 @@ async def create_voice_tool(
         raise ValueError("audio_url和file_path只能提供一个")
     
     # 获取数据库会话
-    async with get_db_context() as db:
+    async for db in get_db():
         try:
-            # 初始化API客户端
-            client = HiFlyClient()
+            # 使用全局客户端实例
             file_id = None
             
             # 如果提供了本地文件路径，先上传文件
@@ -88,8 +78,20 @@ async def create_voice_tool(
                 user_id=user_id or "default",
             )
             
+            # 创建声音记录
+            voice = Voice(
+                title=title,
+                voice_type=voice_type,
+                task_id=task_id,
+                rate="1.0",
+                volume="1.0",
+                pitch="1.0",
+                user_id=user_id or "default",
+            )
+            
             # 保存到数据库
             db.add(task)
+            db.add(voice)
             await db.commit()
             
             return {
@@ -104,25 +106,12 @@ async def create_voice_tool(
             raise ValueError(f"创建声音失败: {str(e)}")
 
 async def edit_voice_tool(
-    voice_id: str,
-    rate: str = "1.0",
-    volume: str = "1.0",
-    pitch: str = "1.0",
-    user_id: Optional[str] = None,
+    voice_id: Annotated[str, Field(description="声音ID")],
+    rate: Annotated[str, Field(description="语速，值为0.5和2.0之间，默认1.0")] = "1.0",
+    volume: Annotated[str, Field(description="音量，值为0.1和2.0之间，默认1.0")] = "1.0",
+    pitch: Annotated[str, Field(description="语调，值为0.1和2.0之间，默认1.0")] = "1.0",
+    user_id: Annotated[Optional[str], Field(description="用户ID，用于验证声音所有权，如不提供则不验证")] = None,
 ) -> Dict[str, Any]:
-    """
-    修改声音参数。
-    
-    Args:
-        voice_id: 声音ID
-        rate: 语速，值为0.5和2.0之间，默认1.0
-        volume: 音量，值为0.1和2.0之间，默认1.0
-        pitch: 语调，值为0.1和2.0之间，默认1.0
-        user_id: 用户ID，用于验证声音所有权，如不提供则不验证
-        
-    Returns:
-        包含修改后的声音参数的信息
-    """
     # 参数验证
     if not voice_id:
         raise ValueError("声音ID不能为空")
@@ -150,7 +139,7 @@ async def edit_voice_tool(
         raise ValueError("语调必须是有效的数字")
     
     # 获取数据库会话
-    async with get_db_context() as db:
+    async for db in get_db():
         try:
             # 查询声音是否存在
             result = await db.execute(select(Voice).where(Voice.voice_id == voice_id))
@@ -160,8 +149,7 @@ async def edit_voice_tool(
             if voice and user_id and voice.user_id != user_id:
                 raise ValueError("您没有权限修改此声音")
             
-            # 初始化API客户端
-            client = HiFlyClient()
+            # 使用全局客户端实例
             
             # 调用API修改声音参数
             response = await client.edit_voice(
@@ -193,10 +181,10 @@ async def edit_voice_tool(
             raise ValueError(f"修改声音参数失败: {str(e)}")
 
 async def list_voices_tool(
-    page: int = 1,
-    size: int = 20,
-    kind: int = 1,
-    user_id: Optional[str] = None,
+    page: Annotated[int, Field(description="页码，默认1")] = 1,
+    size: Annotated[int, Field(description="每页数量，默认20")] = 20,
+    kind: Annotated[int, Field(description="声音分类，1:自己克隆的，2:公共声音，默认1")] = 1,
+    user_id: Annotated[Optional[str], Field(description="用户ID，用于查询特定用户的声音，如不提供则使用默认用户")] = "default",
 ) -> Dict[str, Any]:
     """
     查询声音列表。
@@ -211,8 +199,7 @@ async def list_voices_tool(
         包含声音列表的结果
     """
     try:
-        # 初始化API客户端（单例模式，不会重复创建）
-        client = HiFlyClient()
+        # 使用全局客户端实例
         
         # 调用API查询声音列表
         response = await client.get_voice_list(page=page, size=size, kind=kind)
@@ -220,12 +207,9 @@ async def list_voices_tool(
         # 获取声音列表
         voices = response.get("data", [])
         
-        # 不要在这里关闭客户端，因为是单例模式，关闭后其他地方无法使用
-        # await client.close()
-        
         # 如果是查询自己克隆的声音，同步到数据库
         if kind == 1 and user_id:
-            async with get_db_context() as db:
+            async for db in get_db():
                 try:
                     for voice_data in voices:
                         voice_id = voice_data.get("voice")
@@ -277,20 +261,10 @@ async def list_voices_tool(
         raise ValueError(f"查询声音列表失败: {str(e)}")
 
 async def query_voice_task_tool(
-    task_id: str,
+    task_id: Annotated[str, Field(description="任务ID")],
 ) -> Dict[str, Any]:
-    """
-    查询声音克隆任务状态。
-    
-    Args:
-        task_id: 任务ID
-        
-    Returns:
-        包含任务状态和声音信息的结果
-    """
     # 获取数据库会话
-    async with get_db_context() as db:
-        client = None
+    async for db in get_db():
         try:
             # 从数据库查询任务，预加载voices关系
             result = await db.execute(
@@ -324,7 +298,6 @@ async def query_voice_task_tool(
                     }
             
             # 如果任务还在进行中，调用API查询最新状态
-            client = HiFlyClient()
             response = await client.get_voice_task(task_id)
             
             # 获取状态
@@ -344,14 +317,19 @@ async def query_voice_task_tool(
                 )
             )
             
-            # 如果任务完成，创建声音记录
+            # 如果任务完成，更新声音记录
             if status == 3 and voice_id:  # 3表示完成
-                # 检查声音是否已存在
-                result = await db.execute(select(Voice).where(Voice.voice_id == voice_id))
-                existing_voice = result.scalars().first()
+                # 查询声音记录
+                result = await db.execute(select(Voice).where(Voice.task_id == task_id))
+                voice = result.scalars().first()
                 
-                if not existing_voice:
-                    # 创建声音记录
+                if voice:
+                    # 更新声音记录
+                    voice.voice_id = voice_id
+                    voice.demo_url = demo_url
+                    db.add(voice)
+                else:
+                    # 创建声音记录（理论上不应该走到这里，因为创建任务时已创建声音记录）
                     voice = Voice(
                         voice_id=voice_id,
                         title=task.title,
@@ -386,10 +364,6 @@ async def query_voice_task_tool(
             await db.rollback()
             logger.error(f"查询声音克隆任务状态失败: {str(e)}")
             raise ValueError(f"查询声音克隆任务状态失败: {str(e)}")
-        finally:
-            # 确保API客户端被关闭
-            if client:
-                await client.close()
 
 # 创建FastMCP工具
 create_voice = Tool.from_function(
@@ -426,4 +400,15 @@ voice_tools = [
     edit_voice,
     list_voices,
     query_voice_task
-] 
+]
+
+# 应用退出时关闭客户端
+import atexit
+import asyncio
+
+def close_client():
+    loop = asyncio.get_event_loop()
+    if not loop.is_closed():
+        loop.run_until_complete(client.close())
+
+atexit.register(close_client) 

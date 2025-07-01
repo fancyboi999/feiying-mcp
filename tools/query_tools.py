@@ -16,6 +16,9 @@ from api_client import HiFlyClient
 # 配置日志
 logger = logging.getLogger(__name__)
 
+# 创建全局客户端实例
+client = HiFlyClient()
+
 async def query_private_avatars_tool(
     user_id: str= "default",
     page: int = 1,
@@ -48,57 +51,48 @@ async def query_private_avatars_tool(
     # 获取数据库会话
     async for db in get_db():
         try:
-            # 查询用户的私人虚拟人总数
-            count_query = select(func.count(Avatar.id)).where(
-                Avatar.user_id == user_id,
-                Avatar.kind == 1  # 1表示私人虚拟人
+            # 查询总数
+            count_result = await db.execute(
+                select(func.count()).select_from(Avatar).where(
+                    Avatar.user_id == user_id,
+                    Avatar.kind == 1  # 1表示自己克隆的
+                )
             )
-            result = await db.execute(count_query)
-            total = result.scalar()
+            total_count = count_result.scalar_one()
             
-            # 如果没有数据，直接返回空列表
-            if total == 0:
-                return {
-                    "total": 0,
-                    "page": page,
-                    "size": size,
-                    "avatars": []
-                }
+            # 查询分页数据
+            query_result = await db.execute(
+                select(Avatar).where(
+                    Avatar.user_id == user_id,
+                    Avatar.kind == 1  # 1表示自己克隆的
+                ).order_by(Avatar.created_at.desc()).offset(offset).limit(size)
+            )
+            avatars = query_result.scalars().all()
             
-            # 查询用户的私人虚拟人列表，按创建时间倒序排序
-            query = select(Avatar).where(
-                Avatar.user_id == user_id,
-                Avatar.kind == 1  # 1表示私人虚拟人
-            ).order_by(Avatar.created_at.desc()).offset(offset).limit(size)
-            
-            result = await db.execute(query)
-            avatars = result.scalars().all()
-            
-            # 构造返回结果
+            # 构建结果
             avatar_list = []
             for avatar in avatars:
-                avatar_list.append({
-                    "id": avatar.id,
+                avatar_data = {
                     "avatar_id": avatar.avatar_id,
                     "title": avatar.title,
+                    "kind": avatar.kind,
+                    "task_id": avatar.task_id,
                     "created_at": avatar.created_at.isoformat() if avatar.created_at else None,
-                    "task_id": avatar.task_id
-                })
-            
-            # 计算总页数
-            total_pages = (total + size - 1) // size
+                    "updated_at": avatar.updated_at.isoformat() if avatar.updated_at else None
+                }
+                avatar_list.append(avatar_data)
             
             return {
-                "total": total,
+                "avatars": avatar_list,
                 "page": page,
                 "size": size,
-                "total_pages": total_pages,
-                "avatars": avatar_list
+                "total": total_count,
+                "pages": (total_count + size - 1) // size  # 总页数
             }
             
         except Exception as e:
-            logger.error(f"查询私人虚拟人失败: {str(e)}")
-            raise ValueError(f"查询私人虚拟人失败: {str(e)}")
+            logger.error(f"查询私人虚拟人列表失败: {str(e)}")
+            raise ValueError(f"查询私人虚拟人列表失败: {str(e)}")
 
 # 创建FastMCP工具
 query_private_avatars = Tool.from_function(
@@ -108,8 +102,7 @@ query_private_avatars = Tool.from_function(
     tags={"avatar", "query", "private"}
 )
 
-
 # 导出工具列表，用于注册到FastMCP服务器
 query_tools = [
-    query_private_avatars,
+    query_private_avatars
 ] 

@@ -5,8 +5,9 @@
 import os
 import logging
 import asyncio
-from typing import Dict, Any, Optional, List, Union
+from typing import Annotated, Dict, Any, Optional, List, Union
 from fastmcp.tools import Tool
+from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update
@@ -20,25 +21,15 @@ from models import Task, Avatar
 # 配置日志
 logger = logging.getLogger(__name__)
 
+# 创建全局客户端实例
+client = HiFlyClient()
+
 async def create_avatar_by_video_tool(
-    title: str,
-    video_url: Optional[str] = None,
-    file_path: Optional[str] = None,
-    user_id: Optional[str] = None,
+    title: Annotated[str, Field(description="数字人名称，不超过20个字")],
+    video_url: Annotated[Optional[str], Field(description="视频URL地址，与file_path二选一必填，支持mp4、mov格式且使用h264编码，500MB以内，分辨率范围360p～4K，时长范围5秒～30分钟")] = None,
+    file_path: Annotated[Optional[str], Field(description="本地视频文件路径，与video_url二选一必填，系统会自动上传该文件")] = None,
+    user_id: Annotated[Optional[str], Field(description="用户ID，用于关联数字人所有者，如不提供则使用默认用户")] = "default",
 ) -> Dict[str, Any]:
-    """
-    通过视频创建数字人。
-    
-    Args:
-        title: 数字人名称，不超过20个字
-        video_url: 视频URL地址，与file_path二选一必填，支持mp4、mov格式且使用h264编码，500MB以内，分辨率范围360p～4K，时长范围5秒～30分钟
-        file_path: 本地视频文件路径，与video_url二选一必填，系统会自动上传该文件
-        user_id: 用户ID，用于关联数字人所有者，如不提供则使用默认用户
-        
-    Returns:
-        包含任务ID和状态的信息
-    """
-    # 参数验证
     if not video_url and not file_path:
         raise ValueError("video_url和file_path必须提供一个")
     
@@ -47,10 +38,8 @@ async def create_avatar_by_video_tool(
     
     # 获取数据库会话
     async for db in get_db():
-        client = None
         try:
-            # 初始化API客户端
-            client = HiFlyClient()
+            # 使用全局客户端实例
             file_id = None
             
             # 如果提供了本地文件路径，先上传文件
@@ -86,9 +75,15 @@ async def create_avatar_by_video_tool(
                 request_id=request_id,
                 user_id=user_id or "default",
             )
-            
+            avatar = Avatar(
+                title=title,
+                kind=1,  # 1表示自己克隆的
+                task_id=task_id,
+                user_id=user_id or "default",
+            )
             # 保存到数据库
             db.add(task)
+            db.add(avatar)
             await db.commit()
             
             return {
@@ -101,32 +96,14 @@ async def create_avatar_by_video_tool(
             await db.rollback()
             logger.error(f"创建数字人失败: {str(e)}")
             raise ValueError(f"创建数字人失败: {str(e)}")
-        finally:
-            # 确保API客户端被关闭
-            if client:
-                await client.close()
 
 async def create_avatar_by_image_tool(
-    title: str,
-    image_url: Optional[str] = None,
-    file_path: Optional[str] = None,
-    model: int = 2,
-    user_id: Optional[str] = None,
+    title: Annotated[str, Field(description="数字人名称，不超过20个字")],
+    image_url: Annotated[Optional[str], Field(description="图片URL地址，与file_path二选一必填")] = None,
+    file_path: Annotated[Optional[str], Field(description="本地图片文件路径，与image_url二选一必填，系统会自动上传该文件")] = None,
+    model: Annotated[int, Field(description="模型类型，1:视频2.0，2:视频2.1，默认2")] = 2,
+    user_id: Annotated[Optional[str], Field(description="用户ID，用于关联数字人所有者，如不提供则使用默认用户")] = "default",
 ) -> Dict[str, Any]:
-    """
-    通过图片创建数字人。
-    
-    Args:
-        title: 数字人名称，不超过20个字
-        image_url: 图片URL地址，与file_path二选一必填
-        file_path: 本地图片文件路径，与image_url二选一必填，系统会自动上传该文件
-        model: 模型类型，1:视频2.0，2:视频2.1，默认2
-        user_id: 用户ID，用于关联数字人所有者，如不提供则使用默认用户
-        
-    Returns:
-        包含任务ID和状态的信息
-    """
-    # 参数验证
     if not image_url and not file_path:
         raise ValueError("image_url和file_path必须提供一个")
     
@@ -135,10 +112,8 @@ async def create_avatar_by_image_tool(
     
     # 获取数据库会话
     async for db in get_db():
-        client = None
         try:
-            # 初始化API客户端
-            client = HiFlyClient()
+            # 使用全局客户端实例
             file_id = None
             
             # 如果提供了本地文件路径，先上传文件
@@ -174,9 +149,16 @@ async def create_avatar_by_image_tool(
                 request_id=request_id,
                 user_id=user_id or "default",
             )
-            
+            # avatar
+            avatar = Avatar(
+                title=title,
+                kind=1,  # 1表示自己克隆的
+                task_id=task_id,
+                user_id=user_id or "default",
+            )
             # 保存到数据库
             db.add(task)
+            db.add(avatar)
             await db.commit()
             
             return {
@@ -189,26 +171,12 @@ async def create_avatar_by_image_tool(
             await db.rollback()
             logger.error(f"创建数字人失败: {str(e)}")
             raise ValueError(f"创建数字人失败: {str(e)}")
-        finally:
-            # 确保API客户端被关闭
-            if client:
-                await client.close()
 
 async def query_avatar_task_tool(
-    task_id: str,
+    task_id: Annotated[str, Field(description="任务ID")],
 ) -> Dict[str, Any]:
-    """
-    查询数字人克隆任务状态。
-    
-    Args:
-        task_id: 任务ID
-        
-    Returns:
-        包含任务状态和数字人信息的结果
-    """
-    # 获取数据库会话
+
     async for db in get_db():
-        client = None
         try:
             # 从数据库查询任务，预加载avatars关系
             result = await db.execute(
@@ -219,32 +187,16 @@ async def query_avatar_task_tool(
             if not task:
                 raise ValueError(f"任务不存在: {task_id}")
             
-            # 如果任务已经完成或失败，直接返回数据库中的状态
-            if task.status in [3, 4]:  # 3:完成 4:失败
-                if task.status == 3 and task.avatars:
-                    avatar = task.avatars[0]
-                    return {
-                        "task_id": task_id,
-                        "status": "completed",
-                        "avatar_id": avatar.avatar_id,
-                        "title": avatar.title,
-                        "kind": avatar.kind
-                    }
-                elif task.status == 4:
-                    return {
-                        "task_id": task_id,
-                        "status": "failed",
-                        "message": task.message,
-                        "code": task.code
-                    }
+            # 使用全局客户端实例
             
-            # 如果任务还在进行中，调用API查询最新状态
-            client = HiFlyClient()
+            # 调用API查询最新状态
             response = await client.get_avatar_task(task_id)
             
             # 获取状态
             status = response.get("status")
             avatar_id = response.get("avatar")
+            message = response.get("message", "")
+            code = response.get("code", 0)
             
             # 更新数据库中的任务状态
             await db.execute(
@@ -252,27 +204,20 @@ async def query_avatar_task_tool(
                 .where(Task.task_id == task_id)
                 .values(
                     status=status,
-                    message=response.get("message", ""),
-                    code=response.get("code", 0),
+                    message=message,
+                    code=code,
                     updated_at=datetime.datetime.utcnow()
                 )
             )
             
-            # 如果任务完成，创建数字人记录
-            if status == 3 and avatar_id:  # 3表示完成
-                # 检查数字人是否已存在
-                result = await db.execute(select(Avatar).where(Avatar.avatar_id == avatar_id))
-                existing_avatar = result.scalars().first()
+            # 获取或更新数字人记录
+            if avatar_id:
+                result = await db.execute(select(Avatar).where(Avatar.task_id == task_id))
+                avatar = result.scalars().first()
                 
-                if not existing_avatar:
-                    # 创建数字人记录
-                    avatar = Avatar(
-                        avatar_id=avatar_id,
-                        title=task.title,
-                        kind=1,  # 1表示自己克隆的
-                        task_id=task_id,
-                        user_id=task.user_id
-                    )
+                # 如果任务完成，更新数字人记录
+                if status == 3 and avatar:  # 3表示完成
+                    avatar.avatar_id = avatar_id
                     db.add(avatar)
             
             # 提交更改
@@ -289,39 +234,23 @@ async def query_avatar_task_tool(
                 result["avatar_id"] = avatar_id
                 result["title"] = task.title
             elif status == 4:
-                result["message"] = response.get("message", "")
-                result["code"] = response.get("code", 0)
+                result["message"] = message
+                result["code"] = code
             
             return result
             
         except Exception as e:
             await db.rollback()
-            logger.error(f"查询任务状态失败: {str(e)}")
-            raise ValueError(f"查询任务状态失败: {str(e)}")
-        finally:
-            # 确保API客户端被关闭
-            if client:
-                await client.close()
+            logger.error(f"查询数字人克隆任务状态失败: {str(e)}")
+            raise ValueError(f"查询数字人克隆任务状态失败: {str(e)}")
 
 async def list_public_avatars_tool(
-    page: int = 1,
-    size: int = 20,
-    kind: int = 2,
+    page: Annotated[int, Field(description="页码，默认1")],
+    size: Annotated[int, Field(description="每页数量，默认20")],
+    kind: Annotated[int, Field(description="数字人分类，2:公共数字人，默认2")],
 ) -> Dict[str, Any]:
-    """
-    查询公共数字人列表。
-    
-    Args:
-        page: 页码，默认1
-        size: 每页数量，默认20
-        kind: 数字人分类，2:公共数字人，默认2
-        
-    Returns:
-        包含数字人列表的结果
-    """
     try:
-        # 初始化API客户端
-        client = HiFlyClient()
+        # 使用全局客户端实例
         logger.info(f"正在查询公共数字人列表，参数：page={page}, size={size}, kind={kind}")
         
         try:
@@ -343,15 +272,9 @@ async def list_public_avatars_tool(
         except Exception as api_error:
             logger.error(f"API调用失败: {str(api_error)}")
             raise ValueError(f"查询公共数字人列表失败: {str(api_error)}")
-        finally:
-            # 关闭API客户端
-            await client.close()
             
     except Exception as e:
         logger.error(f"查询公共数字人列表失败: {str(e)}")
-        # 确保客户端关闭
-        if 'client' in locals():
-            await client.close()
         raise ValueError(f"查询公共数字人列表失败: {str(e)}")
 
 # 创建FastMCP工具
@@ -389,4 +312,6 @@ avatar_tools = [
     create_avatar_by_image,
     query_avatar_task,
     list_public_avatars
-] 
+]
+
+# 应用退出时关闭客户端会在主模块中处理 

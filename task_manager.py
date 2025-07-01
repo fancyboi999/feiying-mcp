@@ -49,6 +49,7 @@ class TaskManager:
         self.running = False
         self.task = None
         self.processing_tasks: Set[str] = set()  # 正在处理的任务ID集合，避免重复处理
+        self.client = None  # API客户端实例
         
         logger.info(f"TaskManager initialized with check_interval={check_interval}s, max_retry={max_retry}")
     
@@ -57,6 +58,10 @@ class TaskManager:
         if self.running:
             logger.warning("TaskManager is already running")
             return
+        
+        # 创建API客户端
+        self.client = HiFlyClient()
+        logger.info("Created API client for TaskManager")
         
         self.running = True
         self.task = asyncio.create_task(self._update_loop())
@@ -76,6 +81,13 @@ class TaskManager:
             except asyncio.CancelledError:
                 pass
             self.task = None
+        
+        # 关闭API客户端
+        if self.client:
+            await self.client.close()
+            self.client = None
+            logger.info("Closed API client for TaskManager")
+            
         logger.info("TaskManager stopped")
     
     async def _update_loop(self):
@@ -113,8 +125,10 @@ class TaskManager:
                 
                 logger.info(f"Found {len(tasks)} pending tasks")
                 
-                # 创建API客户端
-                client = HiFlyClient()
+                # 确保客户端存在
+                if not self.client:
+                    self.client = HiFlyClient()
+                    logger.info("Re-created API client for TaskManager")
                 
                 # 处理每个未完成的任务
                 for task in tasks:
@@ -123,15 +137,12 @@ class TaskManager:
                     
                     try:
                         # 根据任务类型调用不同的API查询任务状态
-                        await self._update_task_status(db, client, task)
+                        await self._update_task_status(db, self.client, task)
                     except Exception as e:
                         logger.error(f"Error updating task {task.task_id}: {str(e)}")
                     finally:
                         # 无论成功失败，都从处理集合中移除
                         self.processing_tasks.remove(task.task_id)
-                
-                # 关闭API客户端
-                await client.close()
                 
             except Exception as e:
                 logger.error(f"Error checking tasks: {str(e)}")
@@ -198,24 +209,29 @@ class TaskManager:
         """处理数字人克隆任务状态更新"""
         # 获取状态
         status = response.get("status")
-        avatar_id = response.get("avatar_id")
+        avatar_id = response.get("avatar")
         
         # 更新任务状态
         await self._update_task_record(db, task, status, response)
         
-        # 如果任务完成，创建数字人记录
+        # 如果任务完成，更新数字人记录
         if status == 3 and avatar_id:  # 3表示完成
-            # 检查数字人是否已存在
-            result = await db.execute(select(Avatar).where(Avatar.avatar_id == avatar_id))
-            existing_avatar = result.scalars().first()
+            # 查询数字人记录
+            result = await db.execute(select(Avatar).where(Avatar.task_id == task.task_id))
+            avatar = result.scalars().first()
             
-            if not existing_avatar:
+            if avatar:
+                # 更新数字人记录
+                avatar.avatar_id = avatar_id
+                logger.info(f"Updated avatar record for task {task.task_id}")
+            else:
                 # 创建数字人记录
                 avatar = Avatar(
                     avatar_id=avatar_id,
                     title=task.title,
                     task_id=task.task_id,
-                    user_id=task.user_id
+                    user_id=task.user_id,
+                    kind=1  # 1表示自己克隆的
                 )
                 db.add(avatar)
                 logger.info(f"Created avatar record for task {task.task_id}")

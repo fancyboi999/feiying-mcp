@@ -12,6 +12,9 @@ from api_client import HiFlyClient
 # 配置日志
 logger = logging.getLogger(__name__)
 
+# 创建全局客户端实例
+client = HiFlyClient()
+
 async def get_upload_url_tool(
     file_name: str,
     file_size: int,
@@ -36,8 +39,7 @@ async def get_upload_url_tool(
         if file_size <= 0:
             raise ValueError("文件大小必须大于0")
         
-        # 初始化API客户端
-        client = HiFlyClient()
+        # 使用全局客户端实例
         
         # 调用API获取上传地址
         response = await client.get_upload_url(
@@ -45,9 +47,6 @@ async def get_upload_url_tool(
             file_size=file_size,
             content_type=content_type
         )
-        
-        # 关闭API客户端
-        await client.close()
         
         # 获取上传URL和文件ID
         upload_url = response.get("upload_url")
@@ -66,9 +65,6 @@ async def get_upload_url_tool(
         
     except Exception as e:
         logger.error(f"获取上传地址失败: {str(e)}")
-        # 关闭API客户端
-        if 'client' in locals():
-            await client.close()
         raise ValueError(f"获取上传地址失败: {str(e)}")
 
 async def upload_file_tool(
@@ -120,16 +116,12 @@ async def upload_file_tool(
             }
             content_type = content_type_map.get(extension, 'application/octet-stream')
         
-        # 初始化API客户端
-        client = HiFlyClient()
+        # 使用全局客户端实例
         
         logger.info(f"开始上传文件: {file_path}")
         
         # 调用API上传文件
         success, file_id = await client.upload_file(file_path, content_type)
-        
-        # 关闭API客户端
-        await client.close()
         
         if not success or not file_id:
             raise ValueError("文件上传失败")
@@ -137,7 +129,7 @@ async def upload_file_tool(
         logger.info(f"文件上传成功，文件ID: {file_id}")
         
         return {
-            "success": True,
+            "success": success,
             "file_id": file_id,
             "file_name": file_name,
             "file_size": file_size,
@@ -146,9 +138,6 @@ async def upload_file_tool(
         
     except Exception as e:
         logger.error(f"上传文件失败: {str(e)}")
-        # 关闭API客户端
-        if 'client' in locals():
-            await client.close()
         raise ValueError(f"上传文件失败: {str(e)}")
 
 # 创建FastMCP工具
@@ -156,14 +145,14 @@ get_upload_url = Tool.from_function(
     get_upload_url_tool,
     name="get_upload_url",
     description="获取文件上传地址，用于后续上传文件",
-    tags={"file", "upload", "url"}
+    tags={"upload", "file"}
 )
 
 upload_file = Tool.from_function(
     upload_file_tool,
     name="upload_file",
     description="上传本地文件到飞影API，返回文件ID",
-    tags={"file", "upload"}
+    tags={"upload", "file"}
 )
 
 # 导出工具列表，用于注册到FastMCP服务器

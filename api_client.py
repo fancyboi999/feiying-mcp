@@ -80,10 +80,7 @@ class HiFlyClient:
             max_retries: 最大重试次数
             retry_delay: 重试延迟时间（秒）
         """
-        # 如果已经初始化过，则直接返回
-        if self._initialized:
-            return
-            
+        # 保存初始化参数，以便后续重新初始化
         self.api_token = api_token or os.getenv("FLYWORKS_API_TOKEN")
         if not self.api_token:
             raise ValueError("API令牌未提供，请设置FLYWORKS_API_TOKEN环境变量或在初始化时提供api_token参数")
@@ -93,25 +90,38 @@ class HiFlyClient:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         
-        # 创建HTTP客户端
+        # 如果是首次初始化或客户端不存在，则创建HTTP客户端
+        if not hasattr(self, 'client') or self.client is None:
+            self._create_client()
+            logger.info(f"HiFlyClient initialized with base_url: {self.base_url}")
+        
+        # 标记为已初始化
+        self.__class__._initialized = True
+    
+    def _create_client(self):
+        """创建HTTP客户端"""
         self.client = httpx.AsyncClient(
-            timeout=timeout,
+            timeout=self.timeout,
             headers={
                 "Authorization": f"Bearer {self.api_token}",
                 "Content-Type": "application/json",
                 "Accept": "application/json"
             }
         )
-        
-        # 标记为已初始化
-        self.__class__._initialized = True
-        
-        logger.info(f"HiFlyClient initialized with base_url: {self.base_url}")
+        logger.info("Created new HTTP client")
     
     async def close(self):
         """关闭HTTP客户端"""
-        if hasattr(self, 'client'):
+        if hasattr(self, 'client') and self.client is not None:
             await self.client.aclose()
+            self.client = None
+            logger.info("HTTP client closed")
+    
+    def _ensure_client(self):
+        """确保客户端存在并可用"""
+        if not hasattr(self, 'client') or self.client is None:
+            logger.info("Client was closed, recreating...")
+            self._create_client()
     
     def _get_cache_key(self, method: str, url: str, params: Dict[str, Any] = None, json_data: Dict[str, Any] = None) -> str:
         """生成请求缓存键"""
@@ -163,6 +173,9 @@ class HiFlyClient:
         Raises:
             HiFlyAPIError: API返回错误
         """
+        # 确保客户端存在
+        self._ensure_client()
+        
         # 修正URL构建逻辑
         if endpoint.startswith('/'):
             # 如果endpoint以/开头，使用urljoin
@@ -249,13 +262,19 @@ class HiFlyClient:
             error_msg = f"Request Error: {str(e)}"
             logger.error(f"[{request_id}] {error_msg}")
             
+            # 检查是否是客户端关闭错误
+            if "client has been closed" in str(e) and retry_count < self.max_retries:
+                logger.info(f"[{request_id}] Client was closed, recreating and retrying...")
+                self._create_client()
+                return await self._request(method, endpoint, params, json_data, retry_count + 1)
+            
             # 如果可以重试，则重试
             if retry_count < self.max_retries:
                 logger.info(f"[{request_id}] Retrying request ({retry_count + 1}/{self.max_retries})...")
                 await asyncio.sleep(self.retry_delay)
                 return await self._request(method, endpoint, params, json_data, retry_count + 1)
             
-            raise HiFlyAPIError(0, error_msg, None)
+            raise HiFlyAPIError(-1, f"请求错误: {str(e)}", None)
     
     async def get(self, endpoint: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """发送GET请求"""
@@ -550,6 +569,26 @@ class HiFlyClient:
             "title": title
         }
         return await self.post("audio/create_by_tts", json_data=data)
+    
+    async def get_audio_task(self, task_id: str) -> Dict[str, Any]:
+        """
+        查询视频创作任务状态,包括视频和音频,音频的返回结果与视频的返回结果相同，同一个接口请求
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            包含任务状态的响应
+            示例：{
+  "code": 0,
+  "message": "",
+  "status": 3,
+  "video_Url": "https://example.com/videos/abc123.mp4?token=xyz789",
+  "duration": 45,
+  "request_id": "req123456789"
+}
+        """
+        return await self.get("video/task", params={"task_id": task_id})
     
     # ===== 文件上传 API =====
     
