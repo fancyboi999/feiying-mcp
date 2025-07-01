@@ -181,7 +181,7 @@ async def query_audio_task_tool(
             # 获取状态
             status = response.get("status")
             audio_id = response.get("audio_id")
-            audio_url = response.get("url")
+            audio_url = response.get("video_Url")
             duration = response.get("duration", 0)
             
             # 更新数据库中的任务状态
