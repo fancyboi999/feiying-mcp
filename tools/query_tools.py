@@ -17,7 +17,7 @@ from api_client import HiFlyClient
 logger = logging.getLogger(__name__)
 
 async def query_private_avatars_tool(
-    user_id: str,
+    user_id: str= "default",
     page: int = 1,
     size: int = 10,
 ) -> Dict[str, Any]:

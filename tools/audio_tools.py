@@ -9,6 +9,7 @@ from fastmcp.tools import Tool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update
+from sqlalchemy.orm import selectinload
 
 from api_client import HiFlyClient
 from database import get_db
@@ -21,9 +22,9 @@ async def create_audio_by_tts_tool(
     text: str,
     voice: str,
     title: Optional[str] = None,
-    rate: str = "1.0",
-    volume: str = "1.0",
-    pitch: str = "1.0",
+    rate: Optional[str] = "1.0",
+    volume: Optional[str] = "1.0",
+    pitch: Optional[str] = "1.0",
     user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -79,6 +80,7 @@ async def create_audio_by_tts_tool(
     
     # 获取数据库会话
     async for db in get_db():
+        client = None
         try:
             # 初始化API客户端
             client = HiFlyClient()
@@ -87,9 +89,7 @@ async def create_audio_by_tts_tool(
             response = await client.create_audio_by_tts(
                 text=text,
                 voice=voice,
-                rate=rate,
-                volume=volume,
-                pitch=pitch
+                title=title
             )
             
             # 获取任务ID
@@ -113,9 +113,6 @@ async def create_audio_by_tts_tool(
             db.add(task)
             await db.commit()
             
-            # 关闭API客户端
-            await client.close()
-            
             return {
                 "task_id": task_id,
                 "status": "waiting",
@@ -125,10 +122,11 @@ async def create_audio_by_tts_tool(
         except Exception as e:
             await db.rollback()
             logger.error(f"创建音频失败: {str(e)}")
-            # 关闭API客户端
-            if 'client' in locals():
-                await client.close()
             raise ValueError(f"创建音频失败: {str(e)}")
+        finally:
+            # 确保API客户端被关闭
+            if client:
+                await client.close()
 
 async def query_audio_task_tool(
     task_id: str,
@@ -144,9 +142,12 @@ async def query_audio_task_tool(
     """
     # 获取数据库会话
     async for db in get_db():
+        client = None
         try:
-            # 从数据库查询任务
-            result = await db.execute(select(Task).where(Task.task_id == task_id))
+            # 从数据库查询任务，预加载audios关系
+            result = await db.execute(
+                select(Task).where(Task.task_id == task_id).options(selectinload(Task.audios))
+            )
             task = result.scalars().first()
             
             if not task:
@@ -161,7 +162,7 @@ async def query_audio_task_tool(
                         "status": "completed",
                         "audio_id": audio.audio_id,
                         "title": audio.title,
-                        "url": audio.url,
+                        "url": audio.audio_url,
                         "duration": audio.duration,
                         "text": audio.text
                     }
@@ -175,7 +176,7 @@ async def query_audio_task_tool(
             
             # 如果任务还在进行中，调用API查询最新状态
             client = HiFlyClient()
-            response = await client.get_audio_task(task_id)
+            response = await client.get_video_task(task_id)
             
             # 获取状态
             status = response.get("status")
@@ -207,7 +208,7 @@ async def query_audio_task_tool(
                         audio_id=audio_id,
                         title=task.title,
                         task_id=task_id,
-                        url=audio_url,
+                        audio_url=audio_url,
                         duration=duration,
                         text=response.get("text", ""),
                         user_id=task.user_id
@@ -224,9 +225,6 @@ async def query_audio_task_tool(
             
             # 提交更改
             await db.commit()
-            
-            # 关闭API客户端
-            await client.close()
             
             # 返回结果
             status_map = {1: "waiting", 2: "processing", 3: "completed", 4: "failed"}
@@ -250,10 +248,11 @@ async def query_audio_task_tool(
         except Exception as e:
             await db.rollback()
             logger.error(f"查询任务状态失败: {str(e)}")
-            # 关闭API客户端
-            if 'client' in locals():
-                await client.close()
             raise ValueError(f"查询任务状态失败: {str(e)}")
+        finally:
+            # 确保API客户端被关闭
+            if client:
+                await client.close()
 
 # 创建FastMCP工具
 create_audio_by_tts = Tool.from_function(

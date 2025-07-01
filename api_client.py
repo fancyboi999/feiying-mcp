@@ -4,7 +4,8 @@ import os
 import json
 import time
 import asyncio
-from typing import Dict, Any, Optional, Union, List, Tuple
+import uuid
+from typing import Dict, Any, Optional, Union, List, Tuple, ClassVar
 from dotenv import load_dotenv
 from urllib.parse import urljoin
 
@@ -31,7 +32,16 @@ class HiFlyAPIError(Exception):
         super().__init__(f"API Error {code}: {message} (Request ID: {request_id})")
 
 class HiFlyClient:
-    """飞影API客户端"""
+    """飞影API客户端（单例模式）"""
+    
+    # 单例实例
+    _instance: ClassVar[Optional["HiFlyClient"]] = None
+    # 初始化标志
+    _initialized: ClassVar[bool] = False
+    # 请求缓存，用于去重
+    _request_cache: ClassVar[Dict[str, Tuple[float, Any]]] = {}
+    # 缓存过期时间（秒）
+    _cache_ttl: ClassVar[float] = 1.0
     
     # 错误码映射
     ERROR_CODES = {
@@ -53,6 +63,12 @@ class HiFlyClient:
         2015: "数字人克隆失败"
     }
     
+    def __new__(cls, *args, **kwargs):
+        """实现单例模式"""
+        if cls._instance is None:
+            cls._instance = super(HiFlyClient, cls).__new__(cls)
+        return cls._instance
+    
     def __init__(self, api_token: str = None, base_url: str = None, timeout: int = 30, max_retries: int = 3, retry_delay: int = 1):
         """
         初始化飞影API客户端
@@ -64,6 +80,10 @@ class HiFlyClient:
             max_retries: 最大重试次数
             retry_delay: 重试延迟时间（秒）
         """
+        # 如果已经初始化过，则直接返回
+        if self._initialized:
+            return
+            
         self.api_token = api_token or os.getenv("FLYWORKS_API_TOKEN")
         if not self.api_token:
             raise ValueError("API令牌未提供，请设置FLYWORKS_API_TOKEN环境变量或在初始化时提供api_token参数")
@@ -83,11 +103,47 @@ class HiFlyClient:
             }
         )
         
+        # 标记为已初始化
+        self.__class__._initialized = True
+        
         logger.info(f"HiFlyClient initialized with base_url: {self.base_url}")
     
     async def close(self):
         """关闭HTTP客户端"""
-        await self.client.aclose()
+        if hasattr(self, 'client'):
+            await self.client.aclose()
+    
+    def _get_cache_key(self, method: str, url: str, params: Dict[str, Any] = None, json_data: Dict[str, Any] = None) -> str:
+        """生成请求缓存键"""
+        cache_parts = [method, url]
+        if params:
+            cache_parts.append(json.dumps(params, sort_keys=True))
+        if json_data:
+            cache_parts.append(json.dumps(json_data, sort_keys=True))
+        return ":".join(cache_parts)
+    
+    def _check_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """检查请求缓存"""
+        if cache_key in self._request_cache:
+            timestamp, response = self._request_cache[cache_key]
+            # 检查缓存是否过期
+            if time.time() - timestamp <= self._cache_ttl:
+                logger.info(f"Using cached response for request: {cache_key}")
+                return response
+            # 缓存已过期，删除
+            del self._request_cache[cache_key]
+        return None
+    
+    def _update_cache(self, cache_key: str, response: Dict[str, Any]):
+        """更新请求缓存"""
+        self._request_cache[cache_key] = (time.time(), response)
+        
+        # 清理过期缓存
+        current_time = time.time()
+        expired_keys = [k for k, (timestamp, _) in self._request_cache.items() 
+                       if current_time - timestamp > self._cache_ttl]
+        for key in expired_keys:
+            del self._request_cache[key]
     
     async def _request(self, method: str, endpoint: str, params: Dict[str, Any] = None, 
                       json_data: Dict[str, Any] = None, retry_count: int = 0) -> Dict[str, Any]:
@@ -114,15 +170,25 @@ class HiFlyClient:
         else:
             # 否则，手动拼接路径
             url = f"{self.base_url}/{endpoint}"
-        logger.info(f"构建URL: base_url={self.base_url}, endpoint={endpoint}, 最终URL={url}")
+        
+        # 生成请求ID
+        request_id = str(uuid.uuid4())[:8]
+        
+        # 检查缓存（仅对GET请求启用缓存）
+        cache_key = None
+        if method == "GET":
+            cache_key = self._get_cache_key(method, url, params, json_data)
+            cached_response = self._check_cache(cache_key)
+            if cached_response:
+                return cached_response
         
         try:
             # 添加更详细的日志记录
-            logger.info(f"发送请求: {method} {url}")
-            logger.info(f"请求头: {self.client.headers}")
-            logger.info(f"请求参数: {params}")
+            logger.info(f"[{request_id}] 发送请求: {method} {url}")
+            logger.info(f"[{request_id}] 请求头: {self.client.headers}")
+            logger.info(f"[{request_id}] 请求参数: {params}")
             if json_data:
-                logger.info(f"请求数据: {json.dumps(json_data)}")
+                logger.info(f"[{request_id}] 请求数据: {json.dumps(json_data)}")
             
             response = await self.client.request(
                 method=method,
@@ -132,13 +198,13 @@ class HiFlyClient:
             )
             
             # 添加响应日志
-            logger.info(f"响应状态码: {response.status_code}")
-            logger.info(f"响应内容: {response.text}")
+            logger.info(f"[{request_id}] 响应状态码: {response.status_code}")
+            logger.info(f"[{request_id}] 响应内容: {response.text}")
             
             # 处理非200响应
             if response.status_code != 200:
                 error_msg = f"HTTP Error {response.status_code}: {response.text}"
-                logger.error(error_msg)
+                logger.error(f"[{request_id}] {error_msg}")
                 
                 # 处理认证错误
                 if response.status_code == 401:
@@ -146,7 +212,7 @@ class HiFlyClient:
                 
                 # 如果可以重试，则重试
                 if retry_count < self.max_retries:
-                    logger.info(f"Retrying request ({retry_count + 1}/{self.max_retries})...")
+                    logger.info(f"[{request_id}] Retrying request ({retry_count + 1}/{self.max_retries})...")
                     await asyncio.sleep(self.retry_delay)
                     return await self._request(method, endpoint, params, json_data, retry_count + 1)
                 
@@ -154,35 +220,38 @@ class HiFlyClient:
             
             # 解析响应
             response_data = response.json()
-            logger.info(f"解析后的JSON: {json.dumps(response_data)}")
             
             # 检查API错误
             if response_data.get("code", 0) != 0:
                 code = response_data.get("code")
                 message = response_data.get("message") or self.ERROR_CODES.get(code, "未知错误")
-                request_id = response_data.get("request_id")
+                api_request_id = response_data.get("request_id")
                 
-                error_msg = f"API Error {code}: {message} (Request ID: {request_id})"
-                logger.error(error_msg)
+                error_msg = f"API Error {code}: {message} (Request ID: {api_request_id})"
+                logger.error(f"[{request_id}] {error_msg}")
                 
                 # 如果可以重试，则重试（某些错误码不应该重试）
                 non_retryable_codes = [1002, 1005, 1006, 1009, 1011, 1013, 1015, 2003, 2011, 2012]
                 if code not in non_retryable_codes and retry_count < self.max_retries:
-                    logger.info(f"Retrying request ({retry_count + 1}/{self.max_retries})...")
+                    logger.info(f"[{request_id}] Retrying request ({retry_count + 1}/{self.max_retries})...")
                     await asyncio.sleep(self.retry_delay)
                     return await self._request(method, endpoint, params, json_data, retry_count + 1)
                 
-                raise HiFlyAPIError(code, message, request_id)
+                raise HiFlyAPIError(code, message, api_request_id)
+            
+            # 更新缓存（仅对GET请求）
+            if method == "GET" and cache_key:
+                self._update_cache(cache_key, response_data)
             
             return response_data
             
         except httpx.RequestError as e:
             error_msg = f"Request Error: {str(e)}"
-            logger.error(error_msg)
+            logger.error(f"[{request_id}] {error_msg}")
             
             # 如果可以重试，则重试
             if retry_count < self.max_retries:
-                logger.info(f"Retrying request ({retry_count + 1}/{self.max_retries})...")
+                logger.info(f"[{request_id}] Retrying request ({retry_count + 1}/{self.max_retries})...")
                 await asyncio.sleep(self.retry_delay)
                 return await self._request(method, endpoint, params, json_data, retry_count + 1)
             
@@ -265,7 +334,6 @@ class HiFlyClient:
         if file_id:
             data["file_id"] = file_id
             
-        #  
         return await self.post("avatar/create_by_image", json_data=data)
     
     async def get_avatar_task(self, task_id: str) -> Dict[str, Any]:
@@ -278,7 +346,6 @@ class HiFlyClient:
         Returns:
             包含任务状态的响应
         """
-        #  
         return await self.get("avatar/task", params={"task_id": task_id})
     
     async def get_avatar_list(self, page: int = 1, size: int = 20, kind: int = 2) -> Dict[str, Any]:
@@ -329,7 +396,6 @@ class HiFlyClient:
         if file_id:
             data["file_id"] = file_id
             
-        #  
         return await self.post("voice/create", json_data=data)
     
     async def edit_voice(self, voice: str, rate: str = "1.0", 
@@ -352,7 +418,6 @@ class HiFlyClient:
             "volume": volume,
             "pitch": pitch
         }
-        #  
         return await self.post("voice/edit", json_data=data)
     
     async def get_voice_list(self, page: int = 1, size: int = 20, kind: int = 1) -> Dict[str, Any]:
@@ -367,7 +432,6 @@ class HiFlyClient:
         Returns:
             包含声音列表的响应
         """
-        #  
         return await self.get("voice/list", params={"page": page, "size": size, "kind": kind})
     
     async def get_voice_task(self, task_id: str) -> Dict[str, Any]:
@@ -380,7 +444,6 @@ class HiFlyClient:
         Returns:
             包含任务状态的响应
         """
-        #  
         return await self.get("voice/task", params={"task_id": task_id})
     
     # ===== 视频创作 API =====
@@ -408,7 +471,6 @@ class HiFlyClient:
         if file_id:
             data["file_id"] = file_id
             
-        #  
         return await self.post("video/create_by_audio", json_data=data)
     
     async def create_video_by_tts(self, avatar: str, voice: str, text: str, 
@@ -446,20 +508,26 @@ class HiFlyClient:
             if param in kwargs:
                 data[param] = kwargs[param]
                 
-        #  
         return await self.post("video/create_by_tts", json_data=data)
     
     async def get_video_task(self, task_id: str) -> Dict[str, Any]:
         """
-        查询视频创作任务状态
+        查询视频创作任务状态,包括视频和音频
         
         Args:
             task_id: 任务ID
             
         Returns:
             包含任务状态的响应
+            示例：{
+  "code": 0,
+  "message": "",
+  "status": 3,
+  "video_Url": "https://example.com/videos/abc123.mp4?token=xyz789",
+  "duration": 45,
+  "request_id": "req123456789"
+}
         """
-        #  
         return await self.get("video/task", params={"task_id": task_id})
     
     # ===== 音频创作 API =====
@@ -481,7 +549,6 @@ class HiFlyClient:
             "text": text,
             "title": title
         }
-        #  
         return await self.post("audio/create_by_tts", json_data=data)
     
     # ===== 文件上传 API =====
@@ -496,7 +563,6 @@ class HiFlyClient:
         Returns:
             包含上传URL和文件ID的响应
         """
-        #  
         return await self.post("tool/create_upload_url", json_data={"file_extension": file_extension})
     
     async def upload_file(self, file_path: str) -> Tuple[bool, Optional[str]]:
@@ -547,7 +613,6 @@ class HiFlyClient:
         Returns:
             包含积分信息的响应
         """
-        #  
         return await self.get("account/credit")
 
 # 确保在文件顶部导入asyncio 

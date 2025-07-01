@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update
 import datetime
+from sqlalchemy.orm import selectinload
 
 from api_client import HiFlyClient
-from database import get_db
+from database import get_db, get_db_context
 from models import Task, Voice
 
 # 配置日志
@@ -47,7 +48,7 @@ async def create_voice_tool(
         raise ValueError("audio_url和file_path只能提供一个")
     
     # 获取数据库会话
-    async for db in get_db():
+    async with get_db_context() as db:
         try:
             # 初始化API客户端
             client = HiFlyClient()
@@ -91,9 +92,6 @@ async def create_voice_tool(
             db.add(task)
             await db.commit()
             
-            # 关闭API客户端
-            await client.close()
-            
             return {
                 "task_id": task_id,
                 "status": "waiting",
@@ -103,9 +101,6 @@ async def create_voice_tool(
         except Exception as e:
             await db.rollback()
             logger.error(f"创建声音失败: {str(e)}")
-            # 关闭API客户端
-            if 'client' in locals():
-                await client.close()
             raise ValueError(f"创建声音失败: {str(e)}")
 
 async def edit_voice_tool(
@@ -119,30 +114,34 @@ async def edit_voice_tool(
     修改声音参数。
     
     Args:
-        voice_id: 声音标识
+        voice_id: 声音ID
         rate: 语速，值为0.5和2.0之间，默认1.0
         volume: 音量，值为0.1和2.0之间，默认1.0
         pitch: 语调，值为0.1和2.0之间，默认1.0
-        user_id: 用户ID，用于验证声音所有权，如不提供则使用默认用户
+        user_id: 用户ID，用于验证声音所有权，如不提供则不验证
         
     Returns:
-        包含操作结果的信息
+        包含修改后的声音参数的信息
     """
     # 参数验证
+    if not voice_id:
+        raise ValueError("声音ID不能为空")
+    
+    # 验证语速、音量和语调
     try:
         rate_float = float(rate)
         if not (0.5 <= rate_float <= 2.0):
             raise ValueError("语速必须在0.5和2.0之间")
     except ValueError:
         raise ValueError("语速必须是有效的数字")
-        
+    
     try:
         volume_float = float(volume)
         if not (0.1 <= volume_float <= 2.0):
             raise ValueError("音量必须在0.1和2.0之间")
     except ValueError:
         raise ValueError("音量必须是有效的数字")
-        
+    
     try:
         pitch_float = float(pitch)
         if not (0.1 <= pitch_float <= 2.0):
@@ -151,7 +150,7 @@ async def edit_voice_tool(
         raise ValueError("语调必须是有效的数字")
     
     # 获取数据库会话
-    async for db in get_db():
+    async with get_db_context() as db:
         try:
             # 查询声音是否存在
             result = await db.execute(select(Voice).where(Voice.voice_id == voice_id))
@@ -180,9 +179,6 @@ async def edit_voice_tool(
                 voice.updated_at = datetime.datetime.utcnow()
                 await db.commit()
             
-            # 关闭API客户端
-            await client.close()
-            
             return {
                 "voice_id": voice_id,
                 "rate": rate,
@@ -194,9 +190,6 @@ async def edit_voice_tool(
         except Exception as e:
             await db.rollback()
             logger.error(f"修改声音参数失败: {str(e)}")
-            # 关闭API客户端
-            if 'client' in locals():
-                await client.close()
             raise ValueError(f"修改声音参数失败: {str(e)}")
 
 async def list_voices_tool(
@@ -218,7 +211,7 @@ async def list_voices_tool(
         包含声音列表的结果
     """
     try:
-        # 初始化API客户端
+        # 初始化API客户端（单例模式，不会重复创建）
         client = HiFlyClient()
         
         # 调用API查询声音列表
@@ -227,12 +220,12 @@ async def list_voices_tool(
         # 获取声音列表
         voices = response.get("data", [])
         
-        # 关闭API客户端
-        await client.close()
+        # 不要在这里关闭客户端，因为是单例模式，关闭后其他地方无法使用
+        # await client.close()
         
         # 如果是查询自己克隆的声音，同步到数据库
         if kind == 1 and user_id:
-            async for db in get_db():
+            async with get_db_context() as db:
                 try:
                     for voice_data in voices:
                         voice_id = voice_data.get("voice")
@@ -281,9 +274,6 @@ async def list_voices_tool(
         
     except Exception as e:
         logger.error(f"查询声音列表失败: {str(e)}")
-        # 关闭API客户端
-        if 'client' in locals():
-            await client.close()
         raise ValueError(f"查询声音列表失败: {str(e)}")
 
 async def query_voice_task_tool(
@@ -299,10 +289,13 @@ async def query_voice_task_tool(
         包含任务状态和声音信息的结果
     """
     # 获取数据库会话
-    async for db in get_db():
+    async with get_db_context() as db:
+        client = None
         try:
-            # 从数据库查询任务
-            result = await db.execute(select(Task).where(Task.task_id == task_id))
+            # 从数据库查询任务，预加载voices关系
+            result = await db.execute(
+                select(Task).where(Task.task_id == task_id).options(selectinload(Task.voices))
+            )
             task = result.scalars().first()
             
             if not task:
@@ -372,9 +365,6 @@ async def query_voice_task_tool(
             # 提交更改
             await db.commit()
             
-            # 关闭API客户端
-            await client.close()
-            
             # 返回结果
             status_map = {1: "waiting", 2: "processing", 3: "completed", 4: "failed"}
             result = {
@@ -394,11 +384,12 @@ async def query_voice_task_tool(
             
         except Exception as e:
             await db.rollback()
-            logger.error(f"查询任务状态失败: {str(e)}")
-            # 关闭API客户端
-            if 'client' in locals():
+            logger.error(f"查询声音克隆任务状态失败: {str(e)}")
+            raise ValueError(f"查询声音克隆任务状态失败: {str(e)}")
+        finally:
+            # 确保API客户端被关闭
+            if client:
                 await client.close()
-            raise ValueError(f"查询任务状态失败: {str(e)}")
 
 # 创建FastMCP工具
 create_voice = Tool.from_function(

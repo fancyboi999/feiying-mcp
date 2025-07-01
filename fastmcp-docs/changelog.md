@@ -1,11 +1,11 @@
 # Changelog - FastMCP
 
 **Source URL:** https://gofastmcp.com/changelog
-**Generated:** 2025-06-27
+**Generated:** 2025-06-30
 
 ---
 
-[FastMCP Cloud](https://fastmcp.link/x0Kyhy2) is coming!
+FastMCP Cloud is here! [Join the beta](https://fastmcp.link/x0Kyhy2).
 
 [FastMCP home page\\
 FastMCP](https://gofastmcp.com/)

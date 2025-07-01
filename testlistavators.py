@@ -1,12 +1,14 @@
 import asyncio
-from tools.avatar_tools import list_public_avatars_tool
+import logging
+from api_client import HiFlyClient
+from tools.audio_tools import query_audio_task_tool
 
-async def test_list_public_avatars():
-    try:
-        result = await list_public_avatars_tool(kind=2, page=1, size=20)
-        print(result)
-    except Exception as e:
-        print(f"测试失败: {str(e)}")
+# 测试音频生成任务状态
+
+client = HiFlyClient()
+async def test_audio_task():
+    response = await query_audio_task_tool("JvEFA4UAv8Kqet4c39V-Mw")
+    print(f"音频生成任务状态: {response}")
 
 if __name__ == "__main__":
-    asyncio.run(test_list_public_avatars())
+    asyncio.run(test_audio_task())

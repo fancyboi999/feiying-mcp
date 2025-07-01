@@ -12,7 +12,7 @@ class Task(Base):
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     task_id = Column(String(50), unique=True, index=True, nullable=False, comment="飞影API返回的任务ID")
-    task_type = Column(Integer, nullable=False, comment="任务类型，1:作品, 2:数字人克隆, 3:声音克隆")
+    task_type = Column(Integer, nullable=False, comment="任务类型，1:作品, 2:数字人克隆, 3:声音克隆, 4:音频创作")
     status = Column(Integer, default=1, comment="任务状态，1:等待中, 2:处理中, 3:完成, 4:失败")
     title = Column(String(100), comment="任务标题")
     message = Column(String(500), default="", comment="任务消息，通常是错误信息")
@@ -26,6 +26,7 @@ class Task(Base):
     avatars = relationship("Avatar", back_populates="task")
     voices = relationship("Voice", back_populates="task")
     videos = relationship("Video", back_populates="task")
+    audios = relationship("Audio", back_populates="task")
     
     def __repr__(self):
         return f"<Task(id='{self.id}', task_id='{self.task_id}', status={self.status})>"
@@ -106,6 +107,7 @@ class Audio(Base):
     __tablename__ = "audios"
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    audio_id = Column(String(50), unique=True, index=True, nullable=False, comment="飞影API返回的音频ID")
     title = Column(String(100), comment="作品名称")
     voice_id = Column(String(50), ForeignKey("voices.voice_id"), comment="使用的声音ID")
     task_id = Column(String(50), ForeignKey("tasks.task_id"), comment="关联的任务ID")
@@ -114,6 +116,9 @@ class Audio(Base):
     duration = Column(Integer, nullable=True, comment="音频时长(秒)")
     user_id = Column(String(50), index=True, comment="用户ID")
     created_at = Column(DateTime, default=datetime.datetime.utcnow, comment="创建时间")
+    
+    # 关系
+    task = relationship("Task", back_populates="audios")
     
     def __repr__(self):
         return f"<Audio(id='{self.id}', title='{self.title}')>"

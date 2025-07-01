@@ -9,6 +9,7 @@ from fastmcp.tools import Tool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update
+from sqlalchemy.orm import selectinload
 
 from api_client import HiFlyClient
 from database import get_db
@@ -50,6 +51,7 @@ async def create_video_by_audio_tool(
     
     # 获取数据库会话
     async for db in get_db():
+        client = None
         try:
             # 初始化API客户端
             client = HiFlyClient()
@@ -95,9 +97,6 @@ async def create_video_by_audio_tool(
             db.add(video)
             await db.commit()
             
-            # 关闭API客户端
-            await client.close()
-            
             return {
                 "task_id": task_id,
                 "status": "waiting",
@@ -107,10 +106,11 @@ async def create_video_by_audio_tool(
         except Exception as e:
             await db.rollback()
             logger.error(f"创建视频失败: {str(e)}")
-            # 关闭API客户端
-            if 'client' in locals():
-                await client.close()
             raise ValueError(f"创建视频失败: {str(e)}")
+        finally:
+            # 确保API客户端被关闭
+            if client:
+                await client.close()
 
 async def create_video_by_tts_tool(
     avatar: str,
@@ -166,6 +166,7 @@ async def create_video_by_tts_tool(
     
     # 获取数据库会话
     async for db in get_db():
+        client = None
         try:
             # 初始化API客户端
             client = HiFlyClient()
@@ -232,9 +233,6 @@ async def create_video_by_tts_tool(
             db.add(video)
             await db.commit()
             
-            # 关闭API客户端
-            await client.close()
-            
             return {
                 "task_id": task_id,
                 "status": "waiting",
@@ -244,10 +242,11 @@ async def create_video_by_tts_tool(
         except Exception as e:
             await db.rollback()
             logger.error(f"创建视频失败: {str(e)}")
-            # 关闭API客户端
-            if 'client' in locals():
-                await client.close()
             raise ValueError(f"创建视频失败: {str(e)}")
+        finally:
+            # 确保API客户端被关闭
+            if client:
+                await client.close()
 
 async def query_video_task_tool(
     task_id: str,
@@ -263,9 +262,12 @@ async def query_video_task_tool(
     """
     # 获取数据库会话
     async for db in get_db():
+        client = None
         try:
-            # 从数据库查询任务
-            result = await db.execute(select(Task).where(Task.task_id == task_id))
+            # 从数据库查询任务，预加载videos关系
+            result = await db.execute(
+                select(Task).where(Task.task_id == task_id).options(selectinload(Task.videos))
+            )
             task = result.scalars().first()
             
             if not task:
@@ -327,9 +329,6 @@ async def query_video_task_tool(
             # 提交更改
             await db.commit()
             
-            # 关闭API客户端
-            await client.close()
-            
             # 返回结果
             status_map = {1: "waiting", 2: "processing", 3: "completed", 4: "failed"}
             result = {
@@ -357,10 +356,11 @@ async def query_video_task_tool(
         except Exception as e:
             await db.rollback()
             logger.error(f"查询任务状态失败: {str(e)}")
-            # 关闭API客户端
-            if 'client' in locals():
-                await client.close()
             raise ValueError(f"查询任务状态失败: {str(e)}")
+        finally:
+            # 确保API客户端被关闭
+            if client:
+                await client.close()
 
 # 创建FastMCP工具
 create_video_by_audio = Tool.from_function(
