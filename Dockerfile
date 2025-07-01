@@ -22,26 +22,33 @@ COPY . /app/
 RUN uv pip install --system --no-cache-dir -e .
 
 # 创建必要的目录
-RUN mkdir -p /app/excel_files
+RUN mkdir -p /app/excel_files /app/data
 
 # 如果没有.env文件，则复制示例文件（但不覆盖已存在的.env）
 RUN if [ ! -f .env ]; then cp -n env.example .env || true; fi
 
 # 暴露端口
+# Smithery会设置PORT环境变量，我们需要在启动脚本中使用它
 EXPOSE 8000
 
 # 创建启动脚本
 RUN echo '#!/bin/sh\n\
 # 检查环境变量\n\
 if [ -z "$FLYWORKS_API_TOKEN" ]; then\n\
-  echo "警告: FLYWORKS_API_TOKEN 环境变量未设置!"\n\
-  echo "请确保已通过环境变量或.env文件设置API令牌"\n\
+  echo "错误: FLYWORKS_API_TOKEN 环境变量未设置!"\n\
+  echo "请确保已通过环境变量或配置提供API令牌"\n\
+  exit 1\n\
+fi\n\
+\n\
+# 设置端口，优先使用PORT环境变量（Smithery提供）\n\
+if [ -n "$PORT" ]; then\n\
+  export SERVER_PORT=$PORT\n\
 fi\n\
 \n\
 echo "Running database migrations..."\n\
-alembic upgrade head\n\
+alembic upgrade head || echo "Warning: Database migration failed, but continuing..."\n\
 echo "Starting Feiying MCP server..."\n\
-exec feiying-mcp http --host 0.0.0.0 --port 8000 --path /mcp\n\
+exec feiying-mcp http --host ${SERVER_HOST:-0.0.0.0} --port ${SERVER_PORT:-8000} --path ${SERVER_PATH:-/mcp} --log-level ${SERVER_LOG_LEVEL:-info}\n\
 ' > /app/start.sh && chmod +x /app/start.sh
 
 # 启动命令
@@ -49,4 +56,4 @@ CMD ["/app/start.sh"]
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/mcp/health || exit 1
+    CMD curl -f -H "Accept: text/event-stream" http://localhost:${SERVER_PORT:-8000}${SERVER_PATH:-/mcp}/health || exit 1

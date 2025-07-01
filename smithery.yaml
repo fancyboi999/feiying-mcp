@@ -1,14 +1,43 @@
+runtime: "container"
+build:
+  dockerfile: "Dockerfile"
+  dockerBuildPath: "."
 startCommand:
-    type: http
-    configSchema:
-      type: object
-      required: ["FLYWORKS_API_TOKEN"]
-      properties:
-        FLYWORKS_API_TOKEN:
-          type: string
-          description: "飞影API密钥"
-    exampleConfig:
-      FLYWORKS_API_TOKEN: "your_api_key"
+  type: "http"
+  configSchema:
+    type: "object"
+    properties:
+      FLYWORKS_API_TOKEN:
+        type: "string"
+        description: "飞影API令牌，用于访问飞影数字人API"
+      SERVER_HOST:
+        type: "string"
+        description: "服务器主机地址"
+        default: "0.0.0.0"
+      SERVER_PORT:
+        type: "integer"
+        description: "服务器端口"
+        default: 8000
+      SERVER_PATH:
+        type: "string"
+        description: "服务器路径"
+        default: "/mcp"
+      SERVER_LOG_LEVEL:
+        type: "string"
+        description: "日志级别"
+        enum: ["debug", "info", "warning", "error", "critical"]
+        default: "info"
+      DATABASE_URL:
+        type: "string"
+        description: "数据库连接URL"
+        default: "sqlite+aiosqlite:///./data/hifly.db"
+    required: ["FLYWORKS_API_TOKEN"]
+  exampleConfig:
+    FLYWORKS_API_TOKEN: "your_api_token_here"
+    SERVER_HOST: "0.0.0.0"
+    SERVER_PORT: 8000
+    SERVER_PATH: "/mcp"
+    SERVER_LOG_LEVEL: "info"
     commandFunction:
       |-
       (config) => ({command: 'feiying-mcp', args: ['http', '--host', '0.0.0.0', '--port', '8000', '--path', '/mcp', '--api-key', config.FLYWORKS_API_TOKEN]})
