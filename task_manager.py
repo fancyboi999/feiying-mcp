@@ -13,6 +13,11 @@ from sqlalchemy import update, and_
 from api_client import HiFlyClient
 from database import get_db, AsyncSessionLocal
 from models import Task, Avatar, Voice, Video, Audio
+# 导入封装好的工具函数
+from tools.avatar_tools import query_avatar_task_tool
+from tools.voice_tools import query_voice_task_tool
+from tools.video_tools import query_video_task_tool
+from tools.audio_tools import query_audio_task_tool
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -125,19 +130,14 @@ class TaskManager:
                 
                 logger.info(f"Found {len(tasks)} pending tasks")
                 
-                # 确保客户端存在
-                if not self.client:
-                    self.client = HiFlyClient()
-                    logger.info("Re-created API client for TaskManager")
-                
                 # 处理每个未完成的任务
                 for task in tasks:
                     # 标记任务为正在处理
                     self.processing_tasks.add(task.task_id)
                     
                     try:
-                        # 根据任务类型调用不同的API查询任务状态
-                        await self._update_task_status(db, self.client, task)
+                        # 根据任务类型调用不同的工具函数查询任务状态
+                        await self._update_task_status(task)
                     except Exception as e:
                         logger.error(f"Error updating task {task.task_id}: {str(e)}")
                     finally:
@@ -147,176 +147,33 @@ class TaskManager:
             except Exception as e:
                 logger.error(f"Error checking tasks: {str(e)}")
     
-    async def _update_task_status(self, db: AsyncSession, client: HiFlyClient, task: Task):
+    async def _update_task_status(self, task: Task):
         """
-        更新单个任务的状态
+        更新单个任务的状态，使用封装好的工具函数
         
         Args:
-            db: 数据库会话
-            client: API客户端
             task: 任务对象
         """
         logger.debug(f"Updating task {task.task_id} (type: {TASK_TYPE_MAP.get(task.task_type, 'Unknown')})")
         
         try:
-            # 根据任务类型调用不同的API
+            # 根据任务类型调用不同的工具函数
             if task.task_type == 1:  # 视频作品
-                response = await client.get_video_task(task.task_id)
-                await self._process_video_task(db, task, response)
+                await query_video_task_tool(task.task_id)
             elif task.task_type == 2:  # 数字人克隆
-                response = await client.get_avatar_task(task.task_id)
-                await self._process_avatar_task(db, task, response)
+                await query_avatar_task_tool(task.task_id)
             elif task.task_type == 3:  # 声音克隆
-                response = await client.get_voice_task(task.task_id)
-                await self._process_voice_task(db, task, response)
+                await query_voice_task_tool(task.task_id)
             elif task.task_type == 4:  # 音频创作
-                response = await client.get_audio_task(task.task_id)
-                await self._process_audio_task(db, task, response)
+                await query_audio_task_tool(task.task_id)
             else:
                 logger.warning(f"Unknown task type: {task.task_type}")
                 return
             
-            # 提交更改
-            await db.commit()
+            logger.info(f"Successfully updated task {task.task_id}")
             
         except Exception as e:
-            await db.rollback()
             logger.error(f"Error updating task {task.task_id}: {str(e)}")
-    
-    async def _process_video_task(self, db: AsyncSession, task: Task, response: Dict[str, Any]):
-        """处理视频任务状态更新"""
-        # 获取状态
-        status = response.get("status")
-        video_url = response.get("url")
-        duration = response.get("duration", 0)
-        
-        # 更新任务状态
-        await self._update_task_record(db, task, status, response)
-        
-        # 如果任务完成，更新视频记录
-        if status == 3 and video_url:  # 3表示完成
-            # 查询视频记录
-            result = await db.execute(select(Video).where(Video.task_id == task.task_id))
-            video = result.scalars().first()
-            
-            if video:
-                # 更新视频记录
-                video.video_url = video_url
-                video.duration = duration
-                logger.info(f"Updated video record for task {task.task_id}")
-    
-    async def _process_avatar_task(self, db: AsyncSession, task: Task, response: Dict[str, Any]):
-        """处理数字人克隆任务状态更新"""
-        # 获取状态
-        status = response.get("status")
-        avatar_id = response.get("avatar")
-        
-        # 更新任务状态
-        await self._update_task_record(db, task, status, response)
-        
-        # 如果任务完成，更新数字人记录
-        if status == 3 and avatar_id:  # 3表示完成
-            # 查询数字人记录
-            result = await db.execute(select(Avatar).where(Avatar.task_id == task.task_id))
-            avatar = result.scalars().first()
-            
-            if avatar:
-                # 更新数字人记录
-                avatar.avatar_id = avatar_id
-                logger.info(f"Updated avatar record for task {task.task_id}")
-            else:
-                # 创建数字人记录
-                avatar = Avatar(
-                    avatar_id=avatar_id,
-                    title=task.title,
-                    task_id=task.task_id,
-                    user_id=task.user_id,
-                    kind=1  # 1表示自己克隆的
-                )
-                db.add(avatar)
-                logger.info(f"Created avatar record for task {task.task_id}")
-    
-    async def _process_voice_task(self, db: AsyncSession, task: Task, response: Dict[str, Any]):
-        """处理声音克隆任务状态更新"""
-        # 获取状态
-        status = response.get("status")
-        voice_id = response.get("voice_id")
-        
-        # 更新任务状态
-        await self._update_task_record(db, task, status, response)
-        
-        # 如果任务完成，创建声音记录
-        if status == 3 and voice_id:  # 3表示完成
-            # 检查声音是否已存在
-            result = await db.execute(select(Voice).where(Voice.voice_id == voice_id))
-            existing_voice = result.scalars().first()
-            
-            if not existing_voice:
-                # 创建声音记录
-                voice = Voice(
-                    voice_id=voice_id,
-                    title=task.title,
-                    task_id=task.task_id,
-                    user_id=task.user_id,
-                    voice_type=response.get("voice_type", 8),
-                    demo_url=response.get("demo_url")
-                )
-                db.add(voice)
-                logger.info(f"Created voice record for task {task.task_id}")
-    
-    async def _process_audio_task(self, db: AsyncSession, task: Task, response: Dict[str, Any]):
-        """处理音频创作任务状态更新"""
-        # 获取状态
-        status = response.get("status")
-        audio_id = response.get("audio_id")
-        audio_url = response.get("url")
-        duration = response.get("duration", 0)
-        
-        # 更新任务状态
-        await self._update_task_record(db, task, status, response)
-        
-        # 如果任务完成，创建音频记录
-        if status == 3 and audio_id:  # 3表示完成
-            # 检查音频是否已存在
-            result = await db.execute(select(Audio).where(Audio.audio_id == audio_id))
-            existing_audio = result.scalars().first()
-            
-            if not existing_audio:
-                # 创建音频记录
-                audio = Audio(
-                    audio_id=audio_id,
-                    title=task.title,
-                    task_id=task.task_id,
-                    url=audio_url,
-                    duration=duration,
-                    text=response.get("text", ""),
-                    user_id=task.user_id
-                )
-                db.add(audio)
-                
-                # 如果任务中有声音ID，关联声音记录
-                voice_id = response.get("voice")
-                if voice_id:
-                    result = await db.execute(select(Voice).where(Voice.voice_id == voice_id))
-                    voice = result.scalars().first()
-                    if voice:
-                        audio.voice_id = voice_id
-                
-                logger.info(f"Created audio record for task {task.task_id}")
-    
-    async def _update_task_record(self, db: AsyncSession, task: Task, status: int, response: Dict[str, Any]):
-        """更新任务记录"""
-        # 如果状态没有变化，不需要更新
-        if task.status == status:
-            return
-        
-        # 更新任务状态
-        task.status = status
-        task.message = response.get("message", "")
-        task.code = response.get("code", 0)
-        task.updated_at = datetime.datetime.utcnow()
-        
-        logger.info(f"Updated task {task.task_id} status to {TASK_STATUS_MAP.get(status, 'Unknown')}")
 
 # 创建全局任务管理器实例
 task_manager = TaskManager()
