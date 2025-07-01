@@ -1,0 +1,62 @@
+[project]
+name = "feiying-mcp-server"
+version = "0.1.3"
+description = "Feiying mcp server"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp",
+    "requests",
+    "sqlalchemy>=2.0.0",
+    "sqlalchemy[asyncio]",
+    "aiosqlite",
+    "alembic",
+    "python-dotenv",
+    "fastapi>=0.95.0",
+    "uvicorn[standard]",
+    "pydantic>=2.0.0",
+    "typer",
+]
+
+[[project.authors]]
+name = "fancy"
+email = "fancyboi999@gmail.com"
+
+[project.scripts]
+feiying-mcp = "feiying_mcp.__main__:app"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["feiying_mcp"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "black",
+    "isort",
+    "mypy",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.10"
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+strict_optional = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unused_ignores = true

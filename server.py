@@ -79,6 +79,42 @@ for tool in all_tools:
     mcp.add_tool(tool)
     logger.info(f"Registered tool: {tool.name}")
 
+
+async def run_sse():
+    """Run Excel MCP server in SSE mode."""
+    # Assign value to EXCEL_FILES_PATH in SSE mode
+    global EXCEL_FILES_PATH
+    EXCEL_FILES_PATH = os.environ.get("EXCEL_FILES_PATH", "./excel_files")
+    # Create directory if it doesn't exist
+    os.makedirs(EXCEL_FILES_PATH, exist_ok=True)
+    
+    try:
+        logger.info(f"Starting Excel MCP server with SSE transport (files directory: {EXCEL_FILES_PATH})")
+        await mcp.run_sse_async()
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+        await mcp.shutdown()
+    except Exception as e:
+        logger.error(f"Server failed: {e}")
+        raise
+    finally:
+        logger.info("Server shutdown complete")
+
+
+def run_http(host: str, port: int, path: str, log_level: str):
+    """Run Excel MCP server in HTTP mode."""
+    try:
+        logger.info(f"Starting Excel MCP server with HTTP transport (http://{host}:{port}{path})")
+        mcp.run(
+            transport="http",
+            host=host,
+            port=port,
+            path=path,
+            log_level=log_level
+        )
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+
 def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description="飞影数字人API服务")
@@ -117,23 +153,10 @@ def main():
     
     # 运行服务器
     try:
-        if transport == "stdio":
-            mcp.run(transport="stdio")
-        elif transport == "http":
-            mcp.run(
-                transport="http",
-                host=host,
-                port=port,
-                path=path,
-                log_level=log_level
-            )
+        if transport == "http":
+            run_http(host=host, port=port, path=path, log_level=log_level)
         elif transport == "sse":
-            mcp.run(
-                transport="sse",
-                host=host,
-                port=port,
-                log_level=log_level
-            )
+            mcp.run(transport="sse", host=host, port=port, log_level=log_level)
         else:
             logger.error(f"Unsupported transport: {transport}")
             sys.exit(1)
