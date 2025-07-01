@@ -85,28 +85,125 @@
 alembic upgrade head
 ```
 
-### 4. 运行服务器
+### 4. 运行服务器与配置
 
-您可以通过多种方式运行服务器：
+本项目支持多种方式来运行和配置 FastMCP 服务器，以适应不同的开发和部署需求。
 
-- **直接运行 (开发模式)**:
-  ```bash
-  python main.py --host 0.0.0.0 --port 8000
-  ```
+#### 配置方式
 
-- **使用 FastMCP CLI (推荐)**:
-  ```bash
-  # 运行服务
-  fastmcp run main.py
+服务器的配置项（如主机、端口等）可以通过以下三种方式设置，优先级从高到低：
 
-  # 以开发模式运行，开启 MCP Inspector
-  fastmcp dev main.py
-  ```
+1.  **命令行参数**: 启动时直接传入参数，优先级最高。
+2.  **配置文件**: 通过 `--config` 参数指定一个 JSON 配置文件。
+3.  **环境变量**: 从 `.env` 文件中加载，通常用于存放敏感信息如 API Token。
 
-- **使用 STDIO 传输协议** (适用于 Claude Desktop 等客户端):
-  ```bash
-  python main.py --transport stdio
-  ```
+#### 传输协议 (Transport)
+
+FastMCP 支持多种传输协议，您可以通过 `--transport` 参数进行选择。参考 [FastMCP 传输协议文档](https://gofastmcp.com/deployment/running-server#transport-options) 了解更多详情。
+
+-   **`http` (默认)**: 启动一个基于 Streamable HTTP 的 Web 服务器。这是推荐用于 Web 服务部署的方式。
+    ```bash
+    # 使用默认配置 (http://127.0.0.1:8000)
+    python main.py --transport http
+
+    # 自定义主机和端口
+    python main.py --transport http --host 0.0.0.0 --port 8080
+    ```
+
+-   **`stdio`**: 使用标准输入/输出进行通信。这是本地工具和桌面客户端（如 Claude Desktop）集成的标准方式。
+    ```bash
+    python main.py --transport stdio
+    ```
+
+-   **`sse`**: 启动一个基于 Server-Sent Events (SSE) 的服务器。这是旧版协议，新项目推荐使用 `http`。
+    ```bash
+    python main.py --transport sse --port 9000
+    ```
+
+#### 命令行参数
+
+您可以使用以下参数来配置服务器的运行：
+
+-   `--config <path>`: 指定 JSON 配置文件的路径。
+-   `--host <address>`: 服务器监听的主机地址 (默认为 `127.0.0.1`)。
+-   `--port <number>`: 服务器监听的端口 (默认为 `8000`)。
+-   `--path <url_path>`: HTTP/SSE 模式下的 URL 路径 (默认为 `/mcp/`)。
+-   `--log-level <level>`: 设置日志级别 (`debug`, `info`, `warning`, `error`, `critical`)。
+-   `--transport <protocol>`: 设置传输协议 (`http`, `stdio`, `sse`)。
+
+#### 使用 FastMCP CLI
+
+FastMCP 命令行工具提供了更便捷的启动方式，尤其是在开发环境中。参考 [FastMCP CLI 文档](https://gofastmcp.com/patterns/cli)。
+
+-   **运行服务**:
+    `fastmcp run` 命令可以启动服务器，并允许您覆盖代码中的传输配置。
+    ```bash
+    # 以 HTTP 模式运行在 8080 端口
+    fastmcp run main.py --transport http --port 8080
+    ```
+
+-   **开发模式**:
+    `fastmcp dev` 命令会启动服务器并附带 [MCP Inspector](https://github.com/modelcontextprotocol/inspector) 工具，方便您调试和测试。
+    ```bash
+    fastmcp dev main.py
+    ```
+    > **注意**: `dev` 命令会创建一个隔离的 Python 环境。如果您的项目有依赖，需要通过 `--with <package>` 参数显式添加。
+
+#### 客户端连接配置 (以 Claude Desktop 为例)
+
+当服务器运行时，您需要配置您的 MCP 客户端来连接它。以下是两种常见的连接方式示例。
+
+##### 方式一：本地连接 (STDIO)
+
+此方式适用于 Claude Desktop 等需要本地运行 MCP 服务器的客户端。
+
+1.  **启动服务器**:
+    使用 `stdio` 协议启动服务器。
+    ```bash
+    python main.py --transport stdio
+    ```
+
+2.  **配置客户端**:
+    在客户端的配置文件（例如 `claude_desktop_config.json`）中，添加以下条目。请确保 `args` 中的路径是 `main.py` 文件的**绝对路径**。
+
+    ```json
+    {
+      "mcpServers": {
+        "feiying-mcp-local": {
+          "command": "python",
+          "args": ["/path/to/your/feiying-mcp/main.py", "--transport", "stdio"]
+        }
+      }
+    }
+    ```
+
+##### 方式二：远程连接 (HTTP)
+
+如果您的客户端支持，或者您需要将服务部署为网络服务，可以使用 HTTP 连接。
+
+1.  **启动服务器**:
+    使用 `http` 协议启动服务器，并确保主机地址可从客户端访问（例如，使用 `0.0.0.0` 监听所有网络接口）。
+    ```bash
+    python main.py --transport http --host 0.0.0.0 --port 8000
+    ```
+
+2.  **配置客户端**:
+    在客户端的配置文件中，添加一个指向您服务器 URL 的条目。
+
+    ```json
+    {
+      "mcpServers": {
+        "feiying-mcp-remote": {
+          "transport": "http",
+          "url": "http://your-server-ip:8000/mcp/"
+        }
+      }
+    }
+    ```
+    > **注意**: 请将 `your-server-ip` 替换为运行服务器的机器的实际 IP 地址或域名。
+
+完成配置并重启客户端后，即可连接到飞影数字人 MCP 服务器。
+
 
 ## ⚙️ 项目结构
 
