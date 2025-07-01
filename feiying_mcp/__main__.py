@@ -1,7 +1,7 @@
 import asyncio
 import typer
 
-from server import run_http, run_sse, parse_args
+from server import run_http, run_sse, parse_args, run_stdio
 
 app = typer.Typer(help="Feiying MCP Server")
 
@@ -22,7 +22,14 @@ def sse():
     finally:
         print("Service stopped.")
 
-
+@app.command()
+def stdio():
+    """Start Feiying MCP Server in stdio mode"""
+    print("Feiying MCP Server - stdio mode")
+    print("----------------------")
+    print("Press Ctrl+C to exit")
+    run_stdio()
+    
 @app.command()
 def http(
     host: str = typer.Option("127.0.0.1", help="服务器主机地址"),

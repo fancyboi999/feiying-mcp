@@ -1,0 +1,17 @@
+version: '3'
+
+services:
+  feiying-mcp:
+    build: .
+    container_name: feiying-mcp
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./excel_files:/app/excel_files
+    environment:
+      - FLYWORKS_API_TOKEN=${FLYWORKS_API_TOKEN}
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8000
+      - SERVER_PATH=/mcp
+    restart: unless-stopped 

@@ -89,6 +89,46 @@ alembic upgrade head
 
 本项目支持多种方式来运行和配置 FastMCP 服务器，以适应不同的开发和部署需求。
 
+#### Docker 部署
+
+项目提供了完整的 Docker 支持，可以轻松部署到任何支持 Docker 的环境。
+
+1. **使用 Docker Compose 运行**:
+   ```bash
+   # 设置API Token
+   export FLYWORKS_API_TOKEN=your_api_token_here
+   
+   # 启动服务
+   docker-compose up -d
+   ```
+   
+   服务将在 `http://localhost:8000/mcp` 上可用。
+
+2. **手动构建并运行 Docker 镜像**:
+   ```bash
+   # 构建镜像
+   docker build -t feiying-mcp .
+   
+   # 运行容器
+   docker run -d --name feiying-mcp \
+     -p 8000:8000 \
+     -e FLYWORKS_API_TOKEN=your_api_token_here \
+     -v $(pwd)/data:/app/data \
+     -v $(pwd)/excel_files:/app/excel_files \
+     feiying-mcp
+   ```
+
+3. **环境变量配置**:
+   
+   Docker 部署时，可以通过环境变量传递配置，主要包括：
+   
+   - `FLYWORKS_API_TOKEN`: 飞影API令牌（必需）
+   - `DATABASE_URL`: 数据库连接URL
+   - `SERVER_HOST`: 服务器主机地址
+   - `SERVER_PORT`: 服务器端口
+   - `SERVER_PATH`: API路径前缀
+   - `SERVER_LOG_LEVEL`: 日志级别
+
 #### 命令行工具
 
 安装后，您可以使用 `feiying-mcp` 命令行工具来启动服务器：

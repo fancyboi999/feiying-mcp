@@ -1,12 +1,14 @@
-# Smithery configuration file: https://smithery.ai/docs/build/project-config
-
 startCommand:
-  type: http
-  commandFunction:
-    # A JS function that produces the CLI command based on the given config to start the MCP on stdio.
-    |-
-    (config) => ({command: 'feiying-mcp', args: ['http']})
-  configSchema:
-    # JSON Schema defining the configuration options for the MCP.
-    {}
-  exampleConfig: {}
+    type: http
+    configSchema:
+      type: object
+      required: ["FLYWORKS_API_TOKEN"]
+      properties:
+        FLYWORKS_API_TOKEN:
+          type: string
+          description: "飞影API密钥"
+    exampleConfig:
+      FLYWORKS_API_TOKEN: "your_api_key"
+    commandFunction:
+      |-
+      (config) => ({command: 'feiying-mcp', args: ['http', '--host', '0.0.0.0', '--port', '8000', '--path', '/mcp', '--api-key', config.FLYWORKS_API_TOKEN]})

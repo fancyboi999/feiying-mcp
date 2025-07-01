@@ -126,6 +126,17 @@ def parse_args():
     parser.add_argument("--transport", type=str, choices=["stdio", "http", "sse"], default="http", help="传输协议")
     return parser.parse_args()
 
+def run_stdio():
+    """Run feiying MCP server in stdio mode."""
+    try:
+        logger.info("Starting feiying MCP server with stdio transport")
+        mcp.run(transport="stdio")
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+    except Exception as e:
+        logger.error(f"Error running server: {str(e)}")
+        sys.exit(1)
+
 def main():
     """主函数"""
     # 解析命令行参数
@@ -157,6 +168,8 @@ def main():
             run_http(host=host, port=port, path=path, log_level=log_level)
         elif transport == "sse":
             mcp.run(transport="sse", host=host, port=port, log_level=log_level)
+        elif transport == "stdio":
+            run_stdio()
         else:
             logger.error(f"Unsupported transport: {transport}")
             sys.exit(1)
